@@ -1,0 +1,337 @@
+---
+title: "COVID-19_week5_homework"
+author: "Weichao Zhang"
+date: "2024-06-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+## 1. Input Data
+### 1.1 Read the data
+Input the data from the provided URLs.
+```{r import_data, message=FALSE}
+library(stringr)
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/" # This is the folder of the csv files
+file_names <- c("time_series_covid19_confirmed_global.csv"        ,"time_series_covid19_deaths_global.csv", "time_series_covid19_confirmed_US.csv", "time_series_covid19_deaths_US.csv")
+urls <- str_c(url_in, file_names)
+```
+
+Read in the data and create data frames.
+```{r read_data, message=FALSE}
+library(readr)
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+```
+
+After looking at the data sets, I find that the date and cases/deaths are organized according to a specific country/region. I plan to analyze the trending of cases/deaths over time. Hence, I would like to create columns for the date and cases/deaths, and get rid of the Lat/Long, etc. Also, I need to put the cases and deaths into one data frame. The data sets are tidied in the following chunks.
+
+### 1.2 Tidy the global data
+Create columns for date and cases/deaths. Combine cases and deaths into one data frame.
+```{r tidy_global_data, message=FALSE}
+# Tidy the data sets by creating columns of date, cases/deaths
+library(tidyr)
+library(dplyr)
+global_cases <- global_cases %>%
+  pivot_longer(cols = -c('Province/State','Country/Region', Lat, Long),names_to = "date", values_to = "cases") %>% 
+  select(-c(Lat, Long)) # Leave out Lat and Long
+
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c('Province/State','Country/Region', Lat, Long),names_to = "date", values_to = "deaths") %>% 
+  select(-c(Lat, Long))
+```
+
+Join the two data sets, and output the data set of global.
+```{r global_cases_transform, message=FALSE}
+library(lubridate)
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = 'Country/Region', Province_State = 'Province/State') %>%
+  # Transform the character strings of date into the date objects
+  mutate(date= mdy(date)) %>%
+  # Filter out the days having no cases
+  filter(cases>0)
+```
+
+Add global population to the data frame.
+```{r global_cases_population, message=FALSE}
+global <- global %>%
+  unite("Combined_Key", c(Province_State, Country_Region), sep=",", na.rm = TRUE, remove=FALSE)
+  # The url of the csv containing the population data
+  uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+  # read in the data, and get rid of the unused.
+  uid <- read_csv(uid_lookup_url) %>%
+  select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2, UID, FIPS))
+  
+# Add the population data as a new column in the data set of global
+global <- global %>%
+  left_join(uid, by=c("Province_State", "Country_Region")) %>%
+  select(Province_State, Country_Region, date, cases, deaths, Population, Combined_Key)
+global # show the tidied data frame
+```
+
+### 1.3 Tidy the US data
+The next step is handling the data of cases and deaths in US. The population data is included. The steps are similar.
+```{r us_cases_transformation, message=FALSE}
+library(lubridate)
+US_cases <- US_cases %>%
+  pivot_longer(cols = -c(UID:Combined_Key), names_to = "date", values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -c(UID:Population), names_to = "date", values_to = "deaths")  %>%
+  select(Admin2:deaths)  %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+# Join the two data sets, and output the data set of US.
+US <- US_cases %>%
+  full_join(US_deaths) %>%
+  filter(cases>0)
+US # show the tidied date frame
+```
+
+## 2. Visualize data
+### 2.1 Visualize the global data
+Visualize the global cases and deaths over time.
+```{r data_visualization_global, message=FALSE}
+# Group by countries
+global_by_country <- global %>%
+  group_by(Country_Region, date) %>%
+  select(Country_Region, date, cases, deaths, Population) %>%
+  ungroup()
+global_by_country
+
+# Calculating the global cases/deaths by summing the countries
+global_totals <- global_by_country %>%
+  mutate(Population = ifelse(is.na(Population), 0, Population)) %>% # set NA to zero
+  group_by(date)  %>%
+  summarize(cases=sum(cases), deaths=sum(deaths), Population = sum(Population)) %>% 
+  ungroup()
+global_totals
+
+# Plot a line chart to show the global cases/deaths over time
+library(ggplot2)
+global_totals %>%
+  filter(cases>0) %>%
+  ggplot(aes(x=date, y=cases)) +
+  geom_line(aes(color="cases")) +
+  geom_point(aes(color="cases")) +
+  geom_line(aes(y=deaths, color="deaths")) +
+  geom_point(aes(y=deaths, color="deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90))+
+  labs(title="COVID19 in the world", y=NULL)
+
+# I can also look up the cases/deaths in a specific country over time
+country <- "Japan"
+global_by_country %>%
+  filter(Country_Region == country) %>% 
+  filter(cases>0) %>%
+  ggplot(aes(x=date, y=cases)) +
+  geom_line(aes(color="cases")) +
+  geom_point(aes(color="cases")) +
+  geom_line(aes(y=deaths, color="deaths")) +
+  geom_point(aes(y=deaths, color="deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90))+
+  labs(title=str_c("COVID19 in ", country), y=NULL)
+```
+
+
+### 2.2 Visualize the US data
+Visualize the cases and deaths in US over time.
+```{r data_visualization_US, message=FALSE}
+# Sum the counties within one state
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases=sum(cases), deaths=sum(deaths), Population=sum(Population)) %>%
+  select(Province_State, Country_Region, date, cases, deaths, Population) %>%
+  ungroup()
+US_by_state # The cases/deaths of counties are summed according to states
+
+# Calculate the total cases/deaths by summing the states within US
+US_totals <- US_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases=sum(cases), deaths=sum(deaths), Population= sum(Population))  %>%
+  select(Country_Region, date, cases, deaths, Population) %>%
+  ungroup()
+US_totals  # The toal cases/deaths in US
+
+# Plot a line chart to show the cases/deaths in US over time
+library(ggplot2)
+US_totals %>%
+  filter(cases>0) %>%
+  ggplot(aes(x=date, y=cases)) +
+  geom_line(aes(color="cases")) +
+  geom_point(aes(color="cases")) +
+  geom_line(aes(y=deaths, color="deaths")) +
+  geom_point(aes(y=deaths, color="deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90))+
+  labs(title="COVID19 in US", y=NULL)
+
+# I can also look up the cases/deaths in a specific state over time
+state <- "New York"
+US_by_state %>%
+  filter(Province_State == state) %>% filter(cases>0) %>%
+  ggplot(aes(x=date, y=cases)) +
+  geom_line(aes(color="cases")) +
+  geom_point(aes(color="cases")) +
+  geom_line(aes(y=deaths, color="deaths")) +
+  geom_point(aes(y=deaths, color="deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90))+
+  labs(title=str_c("COVID19 in ", state), y=NULL)
+```
+
+From the global and US cases/deaths, it can be seen that growing rate of cases/deaths seems to drop to zero. It would lead to a biased opinion that the pandemic is ending. However, we should check the new cases/deaths to determine whether COVID-19 ceases to spread. Hence, the following analyzation aims to mitigate this bias.
+
+## 3. Data analyzation
+### 3.1 Analyze the global data
+Create global new cases and new deaths with respect to the dates
+```{r data_analyzation_global, message=FALSE}
+global_by_country <- global_by_country %>%
+  mutate(new_cases = cases - lag(cases), new_deaths=deaths-lag(deaths))
+global_totals <- global_totals %>%
+  mutate(new_cases = cases - lag(cases), new_deaths = deaths-lag(deaths)) %>%
+  select(new_cases, new_deaths, everything()) %>%
+  mutate(new_cases = ifelse(is.na(new_cases), 0, new_cases)) %>%
+  mutate(new_deaths = ifelse(is.na(new_deaths), 0, new_deaths))
+
+# Plot the global new cases/deaths over time
+global_totals %>%
+  ggplot(aes(x=date, y=new_cases))+
+  geom_line(aes(color="new_cases")) +
+  geom_point(aes(color="new_cases")) +
+  geom_line(aes(y=new_deaths, color="new_deaths")) +
+  geom_point(aes(y=new_deaths, color="new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle=90))+
+  labs(title = "COVID in the world", y=NULL)
+
+# I can also check a specific country
+country <- "Japan"
+global_by_country %>%
+  filter(Country_Region == country) %>% 
+  filter(cases>0) %>%
+  ggplot(aes(x=date, y=new_cases)) +
+  geom_line(aes(color="new_cases")) +
+  geom_point(aes(color="new_cases")) +
+  geom_line(aes(y=new_deaths, color="new_deaths")) +
+  geom_point(aes(y=new_deaths, color="new_deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90))+
+  labs(title=str_c("COVID19 in ", country), y=NULL)
+
+# Check the top 10 countries with least/most deaths per one thousand population
+global_country_totals <- global_by_country %>%
+  group_by(Country_Region) %>%
+  summarize(deaths = max(deaths), cases=max(cases), Population=max(Population), cases_per_thou = 1000*cases/Population, deaths_per_thou = 1000*deaths/Population) %>%
+  filter(cases>0, Population>0) %>%
+  select(Country_Region, deaths, deaths_per_thou, cases, cases_per_thou, everything())
+global_country_totals %>%
+  slice_min(deaths_per_thou, n=10)
+global_country_totals %>%
+  slice_max(deaths_per_thou, n=10) 
+```
+
+By analyzing the global new cases/deaths, we can conclude that the daily new infections are above ten thousand from mid-2020 to 2023. Moreover, there are several waves of pandemics, which is more obvious from the data of Japan. From the death rates, we can see Africa countries (such as Chad and South Sudan) have lower death rates, while East European countries (such as Bulgaria and Hungary) have higher death rates. The influence by other aspects, such as the local climate, needs to be investigated further.
+
+### 3.2 Analyze the US data
+Create new cases and deaths in US with respect to the dates
+```{r data_analyzation_US, message=FALSE}
+US_by_state <- US_by_state %>%
+  mutate(new_cases = cases - lag(cases), new_deaths=deaths-lag(deaths))
+US_totals <- US_totals %>%
+  mutate(new_cases = cases - lag(cases), new_deaths = deaths-lag(deaths))
+
+# Plot the new cases and deaths in US over time
+US_totals %>%
+  ggplot(aes(x=date, y=new_cases))+
+  geom_line(aes(color="new_cases")) +
+  geom_point(aes(color="new_cases")) +
+  geom_line(aes(y=new_deaths, color="new_deaths")) +
+  geom_point(aes(y=new_deaths, color="new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle=90))+
+  labs(title = "COVID in US", y=NULL)
+
+# I can also check a specific state
+state <- "New York"
+US_by_state %>%
+  filter(Province_State == state) %>% filter(cases>0) %>%
+  ggplot(aes(x=date, y=new_cases)) +
+  geom_line(aes(color="new_cases")) +
+  geom_point(aes(color="new_cases")) +
+  geom_line(aes(y=new_deaths, color="new_deaths")) +
+  geom_point(aes(y=new_deaths, color="new_deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90))+
+  labs(title=str_c("COVID19 in ", state), y=NULL)
+
+# Check the top 10 states with least/most deaths per one thousand population
+US_state_totals <- US_by_state %>%
+  group_by(Province_State) %>%
+  summarize(deaths = max(deaths), cases=max(cases), Population=max(Population), cases_per_thou = 1000*cases/Population, deaths_per_thou = 1000*deaths/Population) %>%
+  filter(cases>0, Population>0)
+  US_state_totals %>%
+  slice_min(deaths_per_thou, n=10) %>%
+  select(deaths_per_thou, cases_per_thou, everything())
+  US_state_totals %>%
+  slice_max(deaths_per_thou, n=10) %>%
+  select(deaths_per_thou, cases_per_thou, everything())
+```
+
+By analyzing the US data, we can find the largest new cases/deaths are still high in the latest years, but the interval became larger, which suggests the averaged new cases/deaths dropped. The waves of pandemics are clear shown in the plot. The states with lowest death rates are the islands in the oceans, which suggests the control of pandemics benefits from isolation.
+
+## 4. Modeling
+
+### 4.1 Modeling the global data
+Modeling the death per thousand relating to cases per thousand for the global countries by linear model
+```{r data_modeling_global, message=FALSE}
+mod <- lm(deaths_per_thou ~ cases_per_thou, data=global_country_totals)
+global_country_totals_w_pred <- global_country_totals %>% 
+  mutate(pred = predict(mod)) # predicted deaths per thou
+global_country_totals_w_pred
+global_country_totals_w_pred %>% 
+  ggplot()+
+  geom_point(aes(x=cases_per_thou, y=deaths_per_thou), color='blue')+
+  geom_point(aes(x=cases_per_thou, y=pred), color='red')
+```
+
+The result show that the cases/deaths per thousand are not linearly related when considering the global countries. As I have mentioned that African and East European countries tends to have different case/death ratios, it is suggest to assign different groups and consider multiple dimensional factors.
+
+### 4.2 Modeling the US data
+Modeling the death per thousand relating to cases per thousand for the states by linear model
+```{r data_modeling, message=FALSE}
+mod <- lm(deaths_per_thou ~ cases_per_thou, data=US_state_totals)
+US_total_w_pred <- US_state_totals %>% 
+  mutate(pred = predict(mod)) # predicted deaths per thousand
+US_total_w_pred
+US_total_w_pred %>% 
+  ggplot()+
+  geom_point(aes(x=cases_per_thou, y=deaths_per_thou), color='blue')+
+  geom_point(aes(x=cases_per_thou, y=pred), color='red')
+```
+
+Similarly, linear model is not suitable for this model fitting and prediction.
+
+## 5. Conclusions
+In this report, we analyze the global and US COVID-19 cases/deaths over time. The conclusions are made:
+
+(1) Although the total cases/deaths tends to be flatten off, daily new cases/deaths can still reach to the relatively same level as the beginning of the pandemic.
+
+(2) There are several waves of pandemics. In the latest years, the interval of new cases/deaths become wider, which suggests the averaged new cases/deaths dropped gradually.
+
+(3) African and isolated islands tend to have lower rates of deaths. Hence, it is suggest that local climate and isolation are important factors to the death rates.
+
+
+
+

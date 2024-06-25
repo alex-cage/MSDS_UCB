@@ -1,0 +1,175 @@
+---
+title: "NYPD_shooting_incident_report_week3"
+author: "Weichao Zhang"
+date: "2024-06-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+## 1. Input Data
+Input NYPD Shooting Incident Data by the provided link.
+```{r import_data, message=FALSE}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+urls <- url_in
+```
+
+Read the data by creating a data frame.
+```{r read_data, message=FALSE}
+library(readr)
+incident_data <- read.csv(urls[1])
+```
+
+After looking at the NYPD shooting incident data, I find that a lot of information has been provided, such as boroughs, dates, genders. I would like to analyze the shooting incidents with respect to the boroughs over time. Hence, I need the data of boroughs, date, and number of incidents. The next step is to tidy the date sets and select the associated columns.
+
+```{r tidy_incident_data, message=FALSE}
+library(tidyr)
+library(dplyr)
+library(lubridate)
+incident_data <- incident_data %>%
+  select(c(OCCUR_DATE, BORO)) %>%
+  rename(DATE="OCCUR_DATE") %>%
+  mutate(DATE = mdy(DATE)) %>%
+  arrange(DATE) %>%
+  mutate(MONTH = month(DATE)) %>%
+  mutate(YEAR = year(DATE)) %>%
+  select(c(BORO, DATE, MONTH, YEAR))
+```
+
+## 2. Visualize data
+The next step is to calculate how many incidents happened in different boroughs from 2006 to 2023. I summarize the incidents according to the month and year.
+```{r visualize_data, message=FALSE}
+data_summary <- incident_data %>%
+  group_by(BORO, MONTH, YEAR) %>%
+  summarize(INCIDENT = n())
+```
+
+Check the tail of the data for any missing data
+```{r data_check, message=FALSE}
+tail(data_summary)
+```
+
+The last row is the record of STATEN ISLAND in 2021-12, and I should make sure that all the data is recorded from 2006 to 2023. I can use the following two lines to check, which verifies all the years are included. The missing data in some months indicates that there were no incidents happened.
+```{r year_check, message=FALSE}
+smallest_year <- min(data_summary[data_summary$BORO == "STATEN ISLAND", "YEAR"])
+largest_year <- max(data_summary[data_summary$BORO == "STATEN ISLAND", "YEAR"])
+```
+
+Plot the number of incidents of the boroughs with respect to months and years
+```{r data_visualization_plot, message=FALSE}
+library(ggplot2)
+ggplot(data_summary, aes(interaction(MONTH, YEAR), y=INCIDENT, group=BORO, color=BORO)) +
+  geom_line() +
+  theme_minimal() +
+  labs(x="Month and Year", y="Number of Incidents", title="Incidents in Boroughs over time")+
+  theme(axis.text.x=element_text(angle=45, hjust=0.5))
+```
+
+## 3. DATA ANALYSE
+### 3.1 Shooting incidents with respect to months
+First, the incidents with respect to months are examined.
+```{r data_analysis_month, message=FALSE}
+data_summary %>%
+  ggplot(aes(x=MONTH, y=INCIDENT, fill = BORO)) +
+  geom_bar(stat = "identity") +
+  labs(x="Month", y="Borough", fill = "Total Incidents") +
+  theme_minimal()
+```
+
+I can briefly summarize the trend showing that the monthly number of incidents in New York city increased in summer and fell in winter. The lowest and highest months are February and July, respectively. Also, the incident numbers in different boroughs are observed.
+
+### 3.2 Shooting incidents with respect to years
+Second, the incidents with respect to years are examined.
+```{r data_analysis_year, message=FALSE}
+data_summary %>%
+ggplot(aes(x=YEAR, y=INCIDENT, fill = BORO)) +
+geom_bar(stat = "identity") +
+labs(x="Year", y="Borough", fill = "Total Incidents") +
+theme_minimal()
+```
+
+The result shows that the incident numbers were high from 2006 to 2011, then dropped from 2012-2019. In the last four years, the incident number increased to the level of the early years, but decreased in 2022-2023. Possibly, it would continue to decrease to the level of 2012-2019 in the coming years.
+
+### 3.3 Shooting incidents at a specific borough
+I can also examine a specific borough, e.g., the yearly incidents at STATEN ISLAND.
+```{r data_analysis_boro, message=FALSE}
+boro <-"STATEN ISLAND"
+year <- "2023"
+data_summary %>%
+  filter(BORO == boro, YEAR == year) %>%
+  ggplot(aes(x=MONTH, y=INCIDENT, fill = BORO)) +
+  geom_bar(stat = "identity") +
+  labs(x="Year", y="Borough", fill = "Total Incidents") +
+  theme_minimal()
+```
+
+The result shows that there were no incidents in January and September at STATEN ISLAND in 2023. The largest number happens in the summer, which is in coherence with the analysis for the monthly incidents of the city.
+
+### 3.4 Shooting incidents with respect to boroughs
+Finally, we plot a Pi-chart to show the percentages of incidents in the boroughs. First, we aggregate the historic incidents with respect to the boroughs.
+```{r data_analysis_boro_percentage, message=FALSE}
+data_by_boro <- data_summary %>%
+  aggregate(INCIDENT~BORO, sum) %>%
+  mutate(percentage = INCIDENT/sum(INCIDENT)*100)
+# Alternatively, I can directly add a new column
+#data_by_boro$percentage <- data_by_boro$count / sum(data_by_boro$count) *100
+
+# create a pi chart
+pie(data_by_boro$INCIDENT, labels=paste(data_by_boro$BORO, round(data_by_boro$percentage, 1), '%'), main='Percentage of Incidents by Borough')
+```
+
+The result shows that most incidents happened in BROOKLYN, BRONX and QUEENS. According to the percentage, one may think the boroughs having more shooting incidents are more dangerous. This leads to biased result because other reasons should be taken into consideration, such as population and land area.
+
+### 3.5 Bias Mitigation
+Usually, people tend to judge the safety of boroughs by the number of shooting accidents happened. But the number is also influenced by other aspects such as land area, population, etc., which leads to biased opinions. Here, I calculate the density (incident number per square km) of the shooting incidents according to the land areas of the five borougs.
+```{r data_bias_mitigation, message=FALSE}
+land_area <- c(109.2, 179.7, 58.7, 281.6, 149.0) # Land area (square km) of the boroughs(BRONX, BROOKLYN, MANHATTAN, QUEENS, STATEN ISLAND).
+data_by_boro <- data_by_boro %>%
+  mutate(AREA = land_area) %>%
+  mutate(DENSITY = INCIDENT/AREA)
+data_by_boro %>%
+  ggplot(aes(x=BORO, y=DENSITY)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(x="Borough", y="Density", title="Density of Boroughs")
+```
+
+The result shows that although the percentage of shooting incidents at MANHATTAN is only 13.2%, but the density is higher than BROOKLYN that has 39.7% of the toal incidents. This suggests that judging only by the total numbers would lead to a biased result.
+  
+## 4. DATA MODELING
+Here I use a linear model to check if the incident numbers are linearly related to the years. I take BRONX as an example.
+```{r data_modeling, message=FALSE}
+# yearly data for every boroughs
+data_sum_year <- incident_data %>%
+  group_by(BORO, YEAR) %>%
+  summarize(INCIDENT = n())
+
+data_year_BRONX <- data_sum_year %>%
+  filter(BORO == "BRONX")
+mod <- lm(INCIDENT~YEAR, data=data_year_BRONX) # linear model
+
+x_grid <- seq(2006, 2023)
+new_df <- tibble(YEAR = x_grid)
+# add a new column of the predicted number
+data_year_BRONX_w_pred <- data_year_BRONX %>%
+  mutate(pred = predict(mod))
+data_year_BRONX_w_pred %>%
+  ggplot() +
+  geom_point(aes(x=YEAR, y=INCIDENT), color='blue') +
+  geom_point(aes(x=YEAR, y=pred), color='red')
+```
+
+The result shows that the actual and predicted incident numbers are not matched in most of the years. Therefore, high-dimensional model would be suitable for training and predicting future number of shooting incidents.
+
+## 5. Conclusions
+This report investigates the shooting incidents at the five boroughs of New York city relating to the date. The following conclusions are made:
+
+(1) Based on the data from 2006 to 2023, the shooting incidents increased in summer and decreased in winter.
+
+(2) The incident numbers dropped from 2012-2019 within the duration. However, during 2020-2022, the number increased to the same level of the early years. In the latest year, the number decreased again.
+
+(3) The incident numbers at STATEN ISLAND in 2023 shows the same trend as the total monthly incidents within the duration, i.e., more shooting incidents happened in summer.
+
+(4) The boroughs of BROCKLYN, BRONX, and QUEENS have the highest percentages of shooting incidents. However, biased opinion would be made if only the numbers are considered. By calculating the incident number with respect to the land areas, the three boroughs with the largest density are BRONX, MANHATTAN, and BROCKLYN.
